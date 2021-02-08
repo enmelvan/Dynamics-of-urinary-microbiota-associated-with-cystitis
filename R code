@@ -1,0 +1,73 @@
+set.seed(123) # ensures repeatability
+
+#PACKAGES NEEDED FOR THE ANALYSIS
+library(beemStatic)
+library(ggraph)
+library(phyloseq)
+library(microbiome)
+library(knitr)
+
+#LOAD PATHS NEEDED FOR THE ANALYSIS
+my.path       <- "C://Users//Marko//Desktop//Urini//"
+path_for_otu  <- paste0(my.path,'LS_otu_data.csv')
+path_for_taxa <- paste0(my.path,'taxonomy.csv')
+path_for_meta <- paste0(my.path,'LS_metadata.csv')
+
+#LOAD YOUR DATA
+otu.file  <- read.csv(path_for_otu, row.names = 1)
+tax.file  <- read.csv(path_for_taxa, row.names = 1)
+meta.file <- read.csv(path_for_meta, row.names = 1)
+
+#COVERT IT TO PHYLOSEQ
+my_data = phyloseq(
+  otu_table(as.matrix(otu.file), taxa_are_rows=T),
+  tax_table(as.matrix(tax.file)),
+  sample_data(meta.file)
+)
+
+#GROUP BY TAXONOMY LEVEL (INPUT HAS TO BE PHYLOSEQ)
+my_phylum  <- tax_glom(my_data, taxrank="Phylum")
+my_class   <- tax_glom(my_data, taxrank="Class")
+my_order   <- tax_glom(my_data, taxrank="Order")
+my_family  <- tax_glom(my_data, taxrank = "Family")
+my_genus   <- tax_glom(my_data, taxrank = "Genus")
+my_species <- tax_glom(my_data, taxrank = "Species")
+my_strain  <- tax_glom(my_data, taxrank = "Strain")
+
+# The key issue is the number of samples with the taxon present, not the mean abundance, so we calculate number of samples with each OTU.
+otu.nsample <- function(phyloseq_object) {
+  n <- c()
+  for(i in 1:nrow(phyloseq_object@otu_table@.Data)) {
+    temp   <- phyloseq_object@otu_table@.Data[i,]
+    n[i]   <- length(temp[temp>0])
+  }
+  names(n) <- row.names(phyloseq_object@otu_table@.Data)
+  return(n)
+}
+my_prune_data <- my_class
+taxon_sub     <- prune_taxa(names(otu.nsample(my_prune_data))[otu.nsample(my_prune_data)>=otu.nsamples(my_prune_data)/2],my_prune_data) #KEEP ONLY TAXA PRESENT IN AT LEAST HALF SAMPLES
+
+# ADDING POISSON NOISE. A NEW OBJECT IS CREATED FOR THE NOISY DATA, AND THE COUNTS ARE UPDATED DIRECTLY, WITH LAMBDA EQUAL TO THE OBSERVED NUMBER OF COUNTS IN THE SAMPLE
+taxon_sub_rand <- taxon_sub
+for(i in 1:ncol(taxon_sub_rand@otu_table@.Data))
+  taxon_sub_rand@otu_table@.Data[,i] <- rpois(rep(1,nrow(taxon_sub_rand@otu_table@.Data)),
+                                              taxon_sub_rand@otu_table@.Data[,i])
+                                              
+#TRANSFORM TO RELATIVE ABUNDANCE
+transform_to_rel_ab <- function(phyloseq_object) {
+  rel_ab <- transform_sample_counts(phyloseq_object, function(x) x/sum(x))
+  return(rel_ab)
+}
+taxon_rel      <- transform_to_rel_ab(taxon_sub)
+taxon_rel_rand <- transform_to_rel_ab(taxon_sub_rand)
+
+#RUN BEEM-STATIC ANALYSIS
+mySubset       <- taxon_rel@otu_table@.Data[,]
+mySubset_rand  <- taxon_rel_rand@otu_table@.Data[,]
+urine.fit      <- func.EM(mySubset,mySubset_rand,max.iter = 40,epsilon=1e-2)
+
+#CHECK THE FIT OF THE MODEL
+diagnoseFit(urine.fit, mySubset, annotate = TRUE) # R^2 > 0.75
+showInteraction(urine.fit, mySubset)
+diagnoseBiomass(urine.fit)                             
+hist(beem2biomass(urine.fit))
