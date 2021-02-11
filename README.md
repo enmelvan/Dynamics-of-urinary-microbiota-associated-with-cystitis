@@ -4,7 +4,6 @@
 Input data:
 
 The input files for BEEM should have the same format as described in the manual for MDSINE. 
-
 The following two files are required by BEEM: OTU and Metadata (see data folders)
 
 
